@@ -1,1 +1,107 @@
 # alispringcloud
+
+4.RestTemplate 使用介绍 ，spring boot提供，参看ShareService类，学会post,get两种类型请求 get Object/Entity区别 , getEntity能获取对应的响应码
+在ContentCenterApplication 中进行RestTemplate 对象Ioc容器注入，在使用的地方注入即可
+
+5.DTO和domain对象区别在于DOMAIN多了很多注解用于持久化或表映射，而dto只作为单纯的对象使用很少加持久化相关注释
+
+6.版本定义
+<!--语义化的版本控制-->
+<!--2：主版本，第几代-->
+<!--1：次版本，一些功能的增加，但是架构没有太大的变化，是兼容的-->
+<!--5：增量版本，bug修复-->
+<!--release：里程碑，SNAPSHOT：开发版 M：里程碑 RELEASE：正式版-->
+<version>2.1.5.RELEASE</version>
+
+GREENWICH-SR1 (SERVICE-REALESE)  表示第一个bug修复版本，建议使用SR2版本间隔时间长，大部分问题得到解决
+GREENWICH RELEASE 表示第一个正式发布版本
+
+一般不用不维护版本以及M1,M2里程碑版本
+
+7.spring cloud以及spring alibaba 整合到spring boot中，在pom.xml中加入如下代码即可，下面是整好的pom
+<dependencyManagement>
+    <dependencies>
+        <!--整合spring cloud-->
+        <dependency>
+            <groupId>org.springframework.cloud</groupId>
+            <artifactId>spring-cloud-dependencies</artifactId>
+            <version>Greenwich.SR1</version>
+            <type>pom</type>
+            <scope>import</scope>
+        </dependency>
+        <!--整合spring cloud alibaba-->
+        <dependency>
+            <groupId>org.springframework.cloud</groupId>
+            <artifactId>spring-cloud-alibaba-dependencies</artifactId>
+            <version>0.9.0.RELEASE</version>
+            <type>pom</type>
+            <scope>import</scope>
+        </dependency>
+    </dependencies>
+</dependencyManagement>
+
+使用上面包中的工具依赖时，直接添加如下工具依赖即可，无需版本号
+<dependency>
+    <groupId>org.springframework.cloud</groupId>
+    <artifactId>spring-cloud-starter-alibaba-nacos-discovery</artifactId>
+</dependency>
+
+8.参看nacos官网
+https://nacos.io/zh-cn/docs/what-is-nacos.html
+每个微服务实例都注册一个nacos client用于和nacos server进行通信，启动注册，停止关闭注册信息
+启动nacos
+Linux/Unix/Mac
+启动命令(standalone代表着单机模式运行，非集群模式):
+sh startup.sh -m standalone
+
+如果您使用的是ubuntu系统，或者运行脚本报错提示[[符号找不到，可尝试如下运行：
+bash startup.sh -m standalone
+
+Windows
+启动命令：
+cmd startup.cmd
+或者双击startup.cmd运行文件。
+
+添加nacos依赖，启动注解不要了，自动添加
+<dependency>
+    <groupId>org.springframework.cloud</groupId>
+    <artifactId>spring-cloud-starter-alibaba-nacos-discovery</artifactId>
+</dependency>
+
+添加配置nacos服务端配置,另外需要添加服务名称
+cloud:
+    nacos:
+      discovery:
+        # 指定nacos server的地址
+        server-addr: localhost:8848
+application:
+    # 服务名称尽量用-，不要用_，不要用特殊字符
+    name: user-center
+    
+9.spring cloud 子项目依赖命名
+spring-cloud-starter-alibaba{子项目名}-sentinel{模块名}
+
+10.TestController 测试服务发现接口DiscoveryClient, 若有个服务实例下线了，再次查询就差不到了
+ @GetMapping("test2")
+    public List<ServiceInstance> getInstances() {
+        // 查询指定服务的所有实例的信息
+        // consul/eureka/zookeeper...
+        return this.discoveryClient.getInstances("user-center");
+    }
+
+11.了解stream 以及lamda表达式使用，functional函数式编程
+
+12.nacos的领域划分， namespace > group > service > cluster > instance , namespace用于划分dev,test,prod实现隔离, group用于划分多个微服务为一组， service用于区分微服务业务领域, cluster 作为微服务集群,cluster可以建设两个集群用于容灾，比如一个南京机房，一个北京机房，服务可以指定访问哪个机房集群服务，instance为单个微服务实例
+
+13.在微服务中配置如上领域，在配置文件中进行元数据设置，也可以在nacos页面进行元数据设置
+cloud:
+    nacos:
+      discovery:
+        # namespace: 56116141-d837-4d15-8842-94e153bb6cfb // 需要再nacos上新建再配置此处uuid
+        # NJ
+        # 指定集群名称
+        cluster-name: BJ  // 设置该微服务属于南京机房的集群，在ribbon时设置调用
+        metadata:  // 只能设置实例元数据，另外也
+          instance: c
+          haha: hehe
+          version: v1
