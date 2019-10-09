@@ -101,7 +101,100 @@ cloud:
         # NJ
         # 指定集群名称
         cluster-name: BJ  // 设置该微服务属于南京机房的集群，在ribbon时设置调用
-        metadata:  // 只能设置实例元数据，另外也
+        metadata:  // 只能设置实例元数据，另外也可以通过nacos界面进行设置
           instance: c
           haha: hehe
           version: v1
+          
+14.客户端负载均衡 ribbon，它会自动从nacos上获取注册的负载均衡列表实例信息 ,而不是服务端nginx负载均衡,添加ribbon依赖添加
+spring-cloud-starter-alibaba-nacos-discovery已经带了ribbon包
+
+添加注释@LoadBalanced 支持客户端负载均衡ribbon功能
+@LoadBalanced
+public RestTemplate restTemplate() {
+    RestTemplate template = new RestTemplate();
+    template.setInterceptors(
+        Collections.singletonList(
+            new TestRestTemplateTokenRelayInterceptor()
+        )
+    );
+    return template;
+}
+请求代码如下，会自动将user-center转化为对应的负载均衡分配的实例ip地址以及端口号
+ ResponseEntity<String> forEntity = restTemplate.getForEntity(
+            "http://user-center/users/{id}",
+            String.class, 2
+        );
+        
+15.ribbon 默认规则配置，通过接口实现自定义配置，其中负载均衡策略默认使用zoneavoidanceRule，在没有
+zone时使用的是roundrobinrule规则，另外还有其他规则可以选择使用
+
+方式一: 
+// 先定义ribbon规则，另外该类必须放在主类之外，避免被主启动程序扫描到因为它也是@Component，若放在主类中被扫描到，会出现该规则将作为全局的ribbon规则使用，其它Iping等接口也可以在如下类中进行注册实现
+@Configuration
+public class RibbonConfiguration {
+    @Bean
+    public IRule ribbonRule() {
+        return new RandomRule();
+    }
+}
+
+// 再将该规则设置到ribbonclient上， 可以通过设置name="user-center"指定访问对应的微服务使用对应的负载均衡方式
+@Configuration
+@RibbonClient(name="user-center", configuration = RibbonConfiguration.class)
+public class UserCenterRibbonConfiguration {
+}
+
+方式二: 配置文件方式配置负载均衡 ，使用application.yml ,属性配置方式优先级比上面代码方式高，先用属性配置，实现不了再用代码配置
+user-center:  // 这里可以配置对应的微服务名使用如下负载均衡方法
+  ribbon:
+    NFLoadBalancerRuleClassName: com.netflix.loadbalancer.RandomRule
+    
+ 16.ribbon的全局配置方式设置@RibbonClients 而不是上面@RibbonClient
+ @Configuration
+ @RibbonClients(defaultConfiguration = RibbonConfiguration.class)
+ public class UserCenterRibbonConfiguration {
+ }
+ 
+17. ribbon的饥饿加载方式配置，默认为懒加载造成首次ribbon访问很慢，若开启饥饿加载在程序启动时就会加载ribbon信息，初次访问url就很快
+ ribbon:
+   eager-load:
+     enabled: true
+     clients: user-center
+     
+18.自定义nacos的负载均衡权重，需要再微服务实例上设置对应的实例权重值，值越大被访问的概率越高
+，下面配置好后，通过修改nacos服务实例对应的权重值进行测试，若将weight设置为0，则该服务实例将
+不会再访问
+
+首先自定义NacosWeightedRule规则
+最后将该规则配置到文件或者如下java代码中
+@Configuration
+@RibbonClients(defaultConfiguration = RibbonConfiguration.class)
+public class UserCenterRibbonConfiguration {
+}
+
+19.实现同机房优先调用，content-center属于bj机房会优先访问BJ集群下的user-center实例，若bj的user-center没有可用的实例，则会访问nj机房content-center实例
+
+首先创建一个基于相同集群优先访问的规则类
+NacosSameClusterWeightedRule
+
+最后两个微服务实例配置如下
+content-center配置BJ机房集群
+  cloud:
+    nacos:
+      discovery:
+        cluster-name: BJ  // 设置cluster名称 
+        
+user-center 分别配置BJ,NJ机房集群，
+
+
+20 ，获取元数据信息，在元数据中设置对应微服务实例只能访问对应版本的元数据实例，在规则中进行判断
+ List<Instance> instances = namingService.selectInstances(name, true);
+            // instances.get(0).getMetadata(); 获取元数据信息
+            
+21.namespace用于资源隔离，服务只能访问同一个namespace下服务，namespace配置如下uuid,先在nacos界面进行配置
+cloud:
+    nacos:
+      discovery:
+        namespace: 56116141-d837-4d15-8842-94e153bb6cfb
+
