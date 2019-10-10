@@ -150,7 +150,7 @@ user-center:  // 这里可以配置对应的微服务名使用如下负载均衡
   ribbon:
     NFLoadBalancerRuleClassName: com.netflix.loadbalancer.RandomRule
     
- 16.ribbon的全局配置方式设置@RibbonClients 而不是上面@RibbonClient
+ 16.ribbon的全局配置方式设置@RibbonClients 而不是上面@RibbonClient ，ribbon不支持全局文件配置
  @Configuration
  @RibbonClients(defaultConfiguration = RibbonConfiguration.class)
  public class UserCenterRibbonConfiguration {
@@ -197,4 +197,175 @@ cloud:
     nacos:
       discovery:
         namespace: 56116141-d837-4d15-8842-94e153bb6cfb
+        
+23.feign自带拦截器，支持自带的ribbon功能，缺省使用connencturl功能
 
+24.feign的日志功能细粒度配置默认是没有开启的，开启后支持查看请求执行时间以及请求体的详细信息
+
+指定包下的日志打印级别，这是spring-boot日志打印配置
+logging:
+  level:
+    com.itmuch.contentcenter.feignclient.UserCenterFeignClient: debug
+    com.alibaba.nacos: error
+
+方式一: feign日志级别是建立在配置的feign接口之上的
+首先代码设置日志级别
+/**
+ * feign的配置类
+ * 这个类别加@Configuration注解了，否则必须挪到@ComponentScan能扫描的包以外,放入到ribbonconfiguration包中，参看spring 父子上下文重复扫描问题
+ */
+public class GlobalFeignConfiguration {
+    @Bean
+    public Logger.Level level(){
+        // 让feign打印所有请求的细节，这里有四种级别，默认为NONE什么都不打印，生成用basic
+        return Logger.Level.FULL; 
+    }
+}
+
+再将上面配置注册到feignclient接口上
+@FeignClient(name = "user-center", configuration = GlobalFeignConfiguration.class)
+public interface UserCenterFeignClient {
+
+最后再配置文件中设置如下
+logging:
+  level:
+    com.itmuch.contentcenter.feignclient.UserCenterFeignClient: debug  // 接口包类 + 日志级别
+    
+方式二: 使用配置文件方式
+@FeignClient(name = "user-center")
+public interface UserCenterFeignClient {
+    /**
+     * http://user-center/users/{id}
+     *
+     * @param id
+     * @return
+     */
+    @GetMapping("/users/{id}")
+    UserDTO findById(@PathVariable Integer id);
+}    
+
+feign接口配置如下    
+feign:
+  client:
+    config:
+      user-center:
+        loggerLevel: full
+        
+25. feign的全局配置
+方式一： 代码配置
+/**
+ * feign的配置类
+ * 这个类别加@Configuration注解了，否则必须挪到@ComponentScan能扫描的包以外
+ */
+public class GlobalFeignConfiguration {
+    @Bean
+    public Logger.Level level(){
+        // 让feign打印所有请求的细节
+        return Logger.Level.FULL;
+    }
+}
+
+在启动类进行配置全局
+@EnableFeignClients(defaultConfiguration = GlobalFeignConfiguration.class)
+public class ContentCenterApplication {
+
+方式二： 配置文件配置
+feign:
+  client:
+    config:
+      # 全局配置
+      default:
+        loggerLevel: full
+
+26.feign 的配置项可以设置超时，重试策略等，拦截器等，具体参看feign文档
+
+27.feign接口继承 抽象出来形成父接口， controller实现该接口， feign接口继承该接口添加注解feignclient即可，把该接口单独形成一个maven模块被公共
+
+28.feign参数传递
+首先在user-center中TestController 中定义如下用户查询服务接口
+// q?id=1&wxId=aaa&...
+    @GetMapping("/q")
+    public User query(User user) {
+        return user;
+    }
+
+其次在content-center中定义如下
+// 定义feign接口 ，需要加上@SpringQueryMap 注释，否则报错，但用@SpringQueryMap这种feign注释的接口参数传递是无法被继承的使用的，而@RequestParam一个个参数定义时可以进行继承使用的 ，对于post 使用的 @ResponseBody和spring 是一样使用可以被继承
+
+@FeignClient(name = "user-center")
+public interface TestUserCenterFeignClient {
+    @GetMapping("/q")
+    UserDTO query(@SpringQueryMap UserDTO userDTO);
+}
+
+// 在TestController 中测试调用feign接口
+@Autowired
+    private TestUserCenterFeignClient testUserCenterFeignClient;
+
+    @GetMapping("test-get")
+    public UserDTO query(UserDTO userDTO) {
+        return testUserCenterFeignClient.query(userDTO);
+    }
+    
+29.feign脱离ribbon的使用方式，如下定义
+@FeignClient(name = "baidu", url = "http://www.baidu.com")
+public interface TestBaiduFeignClient {
+    @GetMapping("")
+    String index();
+}
+
+// 测试使用如下方式
+@Autowired
+private TestBaiduFeignClient testBaiduFeignClient;
+
+@GetMapping("baidu")
+public String baiduIndex() {
+    return this.testBaiduFeignClient.index();
+}
+
+30.feign的性能优化，1.连接池配置， feign的底层默认使用urlconnect, 另外支持apache http以及okhttp替换，2.日志级别优化，这些优化可以提升15%性能，若要使用最高性能直接使用template即可
+
+首先添加如下依赖
+<dependency>
+    <groupId>io.github.openfeign</groupId>
+    <artifactId>feign-httpclient</artifactId>
+</dependency>
+
+其次文件属性配置,配置httpclient相关属性配置
+feign:
+  httpclient:
+    # 让feign使用apache httpclient做请求；而不是默认的urlconnection
+    enabled: true
+    # feign的最大连接数
+    max-connections: 200
+    # feign单个路径的最大连接数
+    max-connections-per-route: 50
+    
+31.雪崩效应， 一次请求访问就占用一个线程，线程长时间等待会占用cpu,内存等资源使用，若不做处理，则该服务所在的所有线程资源会被耗尽,容灾方案如下
+
+超时：最简单的方式，只要超过时间点自动断开连接释放资源
+限流：给服务实例配置阈值，例如800qps,当请求超过该值则会被拒绝，譬如你给我三碗，我只吃一碗
+仓壁模式： 给每个controller分配单独的线程池资源，其中一个资源耗尽不会影响其它请求，譬如不把鸡蛋放在一个篮子里
+断路器模式: 最高端的容错方式，设置指定时间内发生错误次数，或者直接设置发生错误阈值，达到阈值就不访问远程api,进入半开状态，隔断时间允许一次访问，若成功则关闭断路器，若还不行继续关闭
+
+32.sential是流量控制，服务降级以及，熔断的库，整合sentinal,结合actuator进行测试
+<dependency>
+    <groupId>org.springframework.cloud</groupId>
+    <artifactId>spring-cloud-starter-alibaba-sentinel</artifactId>
+</dependency>
+<dependency>
+    <groupId>org.springframework.boot</groupId>
+    <artifactId>spring-boot-starter-actuator</artifactId>
+</dependency>
+
+配置如下，开启显示所有actuator 端点服务查看
+management:
+  endpoints:
+    web:
+      exposure:
+        include: '*'
+  endpoint:
+    health:
+      show-details: always
+      
+访问http://localhost:8080/actuator/sentinel 即可查看端点信息
