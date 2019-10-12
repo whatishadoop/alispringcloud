@@ -369,3 +369,100 @@ management:
       show-details: always
       
 访问http://localhost:8080/actuator/sentinel 即可查看端点信息
+
+33.查看项目sentinel所依赖pom的包，找到对应的sentinel服务版本使用,保证兼容性问题,查看sentinel-core对应的版本号
+
+整合sentinel控制台
+cloud:
+    sentinel:
+      transport:
+        # 指定sentinel 控制台的地址
+        dashboard: localhost:8080
+        
+        
+测试必须进行访问后，才会在sentinel控制台进行显示，说明sentinel是懒加载的，ribbon也是懒加载的
+启动
+java  -Dserver.port=8088  -jar   sentinel-dashboard-1.6.3.jar    指定端口
+访问：http://localhost:8080   ,   用户名和密码：sentinel 
+
+启动rocket
+start mqnamesrv.cmd  --启动命名服务
+start mqbroker.cmd -n 127.0.0.1:9876 autoCreateTopicEnable=true   --启动borker
+
+启动zipkin
+java -jar zipkin-server-2.12.9-exec.jar
+访问http://localhost:9411/zipkin/
+
+测试访问，带token
+使用idea restservice 插件
+X-Token: eyJhbGciOiJIUzI1NiJ9.eyJpZCI6MSwid3hOaWNrbmFtZSI6IuWkp-ebriIsInJvbGUiOiJhZG1pbiIsImlhdCI6MTU3MDc3NDEzOCwiZXhwIjoxNTcxOTgzNzM4fQ.mxDGa0JXQfQ2wWClv3knXxgO1uU3SnPCDgpAvg13c-g
+
+id : 1
+
+http://localhost:8010/shares/{id}
+
+34.sentinel中操作
+流控： 资源名：唯一标识(默认是路径，可以自行定义名称) ，针对来源: 设置对应的微服务名，默认default标识不针对来源全部控制， 阈值类型: 线程或者qps, 达到多少时限流 ，测试设置限流值为1， 请求http://localhost:8010/shares/1 就会提示限流
+
+返回
+{
+  "status": 100,
+  "msg": "限流了"
+}
+
+流控模式关联: 表示关联的资源达到阈值就限流自己
+测试时可以关联一个端点资源/actuator/sentinel ，启动content-center中SentinelTest类，应用场景为针对同一个表查询和修改的接口，若查询很多势必会影响修改，此时要根据业务判断时读优先还是写优先，若设置关联资源是修改，表示修改到达一定赋值，则写接口资源就会关闭，用如下main1测试启动
+public static void main1(String[] args) throws InterruptedException {
+        RestTemplate restTemplate = new RestTemplate();
+        for (int i = 0; i < 10000; i++) {
+            String object = restTemplate.getForObject("http://localhost:8010/actuator/sentinel", String.class);
+            Thread.sleep(500);
+        }
+    }
+
+测试访问http://localhost:8010/shares/{id} 限流
+
+链路资源：配置入口资源，只记录链路上流程，表示从入口资源上进来的流量就会限流
+测试查看content-center: TestController
+@GetMapping("test-a")
+public String testA() {
+    this.testService.common();
+    return "test-a";
+}
+
+@GetMapping("test-b")
+public String testB() {
+    this.testService.common();
+    return "test-b";
+}
+
+TestService类
+@Slf4j
+@Service
+public class TestService {
+    @SentinelResource("common")  添加监控细粒度资源名
+    public String common() {
+        log.info("common....");
+        return "common";
+    }
+}
+
+选择链路流控模式(细粒度的api控制模式)，在入口资源设置/test-a(此时sentinel就会统计该端点资源使用情况，不管/test-b)，此时只有/test-a访问qps超过1就会限流，而/test-b则不会限流，
+测试访问http://localhost:8010/test-a 会限流
+
+warn up 预热因子方式，阈值/预热因子(默认是3)，经过过长时间才开始恢复正常的qps， 若设置qps:100, 加热时长10秒，那么会设置从 100/3作为初始阈值--》 经过10s后达到 --> 100 qps, 场景秒杀活动，若一开始就流量很大会直接打死对应的微服务，需要慢慢的过程再达到阈值效果
+
+排队等待：让请求以匀速方式一一通过，但阀值类型必须设成qps,其它线程模式则该无效，应用场景，有时服务请求比较空闲，有时比较繁忙，所以可以考虑用队列方式
+测试类SentinelTest，使用如下方式测试，循环执行不会被限流，控制台打印很匀速
+public static void main(String[] args) {
+    RestTemplate restTemplate = new RestTemplate();
+    for (int i = 0; i < 10000; i++) {
+        String object = restTemplate.getForObject("http://localhost:8010/test-a", String.class);
+        System.out.println("-----" + object + "-----");
+    }
+}
+
+35.服务降级
+降级规则策略： 
+RT策略：平均响应时间超过阀值
+RT平均响应时间，时间窗口
